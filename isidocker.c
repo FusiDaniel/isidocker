@@ -40,6 +40,8 @@ isidocker shell <imagem>
 int mode;
 char image_dir[255];
 char _image[255];    
+char user_home[255] = "/home/opc";
+
 //definindo os prototipos de funcoes
 int childProcess(void *args);
 int create_container(void);
@@ -62,10 +64,7 @@ int main(int argc, char* argv[]){
     printf("---------------------------------------------------\n"); 
 
     /* check if .isidocker_images folder exists. If doesn't, create it */
-    // strcpy(image_dir, getenv("HOME"));
-    char current_dir[1024];
-    getcwd(current_dir, sizeof(current_dir));
-    strcpy(image_dir, current_dir);
+    strcpy(image_dir, user_home);
     strcat(image_dir, "/.isidocker_images/");
     struct stat s = {0};
     if (!stat(image_dir, &s)){
@@ -78,7 +77,6 @@ int main(int argc, char* argv[]){
     printf(ANSI_COLOR_RESET);
     /* end of check */
 
-
     if (argc < 2){
         
         printf(ANSI_COLOR_YELLOW);
@@ -87,6 +85,7 @@ int main(int argc, char* argv[]){
         
         printf(" - pull <image_name>    : download and uncompress Image from Isidocker Repo\n");
         printf(" - extract <image_name> : uncompress Image from tar.gz file deleting existing one\n");
+        printf(" - daemon <image_name>  : creates a daemon for the 'run' command\n");
         printf(" - run <image_name>     : starts a container\n");
         printf(" - shell <image_name>   : access the container and runs a shell\n");
         printf(ANSI_COLOR_RESET);
@@ -141,10 +140,6 @@ int main(int argc, char* argv[]){
             strcpy(zip_image, _image);
             strcat(zip_image, ".tar.gz");
             printf(ANSI_COLOR_YELLOW ">>> IsiDOCKER - Extracting image %s\n " ANSI_COLOR_RESET, _image);
-            // delete existing folder using rm -rf and execl
-            char rm_cmd[255];
-            strcpy(rm_cmd, extrac_folder);
-            strcat(rm_cmd, _image);
             execl("/bin/tar", "tar", "-xf", zip_image, "-C", extrac_folder,  NULL);
 
         }
@@ -177,6 +172,49 @@ int main(int argc, char* argv[]){
           }
           waitpid(containerPid, NULL, 0);
           return 0;
+    }
+    else if (!strcmp(_command, "daemon")){
+        char service_file_path[255] = "/etc/systemd/system/isidocker-";
+        strcat(service_file_path, _image);
+        strcat(service_file_path, ".service");
+        
+        // remove file if exists
+        remove(service_file_path);
+
+        // create service file
+        FILE *file = fopen(service_file_path, "w");
+
+        if (file == NULL)
+        {
+            printf("ERROR - Could not create file %s\n", service_file_path);
+        }
+
+        fprintf(file, "[Unit]\n");
+        fprintf(file, "Description=IsiDocker Daemon\n\n");
+        fprintf(file, "[Service]\n");
+        fprintf(file, "ExecStart=%s/isidocker.e run %s\n\n", user_home, _image);
+        fprintf(file, "[Install]\n");
+        fprintf(file, "WantedBy=multi-user.target\n");
+        fclose(file);
+
+        printf(">> IsiDOCKER - Daemon created at %s\n", service_file_path);
+        
+        /*  reloads systemd manager configuration,
+            enables isidocker service (make it start on boot), and
+            starts isidocker service (make it start now)*/
+
+        char enable_command[255] = "systemctl enable isidocker-";
+        strcat(enable_command, _image);
+        strcat(enable_command, ".service");
+        char start_command[255] = "systemctl start isidocker-";
+        strcat(start_command, _image);
+        strcat(start_command, ".service");
+
+        system("systemctl daemon-reload");
+        system(enable_command);
+        system(start_command);
+
+        printf(">> IsiDOCKER - Daemon enabled and started!\n");
     }
     else{
         printf("ERROR - Command: %s is not supported\n", _command);
