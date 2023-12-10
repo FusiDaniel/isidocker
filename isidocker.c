@@ -42,6 +42,7 @@ isidocker shell <imagem>
 int mode;
 char image_dir[255];
 char _image[255];
+char log_file_dir[255];
 char user_home[255] = "/home/opc";
 
 // definindo os prototipos de funcoes
@@ -68,6 +69,8 @@ int main(int argc, char *argv[])
     /* check if .isidocker_images folder exists. If doesn't, create it */
     strcpy(image_dir, user_home);
     strcat(image_dir, "/.isidocker_images/");
+    strcpy(log_file_dir, image_dir);
+    strcat(log_file_dir, "/logfile");
     struct stat s = {0};
     if (!stat(image_dir, &s))
     {
@@ -256,26 +259,46 @@ int create_container(void)
     }
 }
 
+int isFileEmpty(const char *filename)
+{
+    FILE *file = fopen(filename, "rb");
+
+    if (file == NULL || fseek(file, 0, SEEK_END) != 0)
+    {
+        perror("Error opening file");
+        return -1;
+    }
+
+    long fileSize = ftell(file);
+    fclose(file);
+    return (fileSize == 0);
+}
+
 int run_container(void)
 {
     // Initialize logging to file
-    char log_file_dir[255];
-    strcpy(log_file_dir, image_dir);
-    strcat(log_file_dir, "/logfile.txt");
-    printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Creating log file at %s\n", log_file_dir);
+    printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Redirecting logs to file at %s\n", log_file_dir);
 
-    int logFile = open(log_file_dir, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    if (logFile == -1) {
+    int logFile = open(log_file_dir, O_WRONLY | O_CREAT | O_APPEND, 0666);
+    if (logFile == -1)
+    {
         perror("Error opening log file");
         return 1;
     }
-    if (dup2(logFile, STDOUT_FILENO) == -1 || dup2(logFile, STDERR_FILENO) == -1) {
+
+    if (dup2(logFile, STDOUT_FILENO) == -1 || dup2(logFile, STDERR_FILENO) == -1)
+    {
         perror("Error redirecting output");
         return 1;
     }
     close(logFile);
 
+    // Check if the log file is empty
+    if (!isFileEmpty(log_file_dir))
+        printf("\n\n---------------------------------------------------\n\n\n");
+
     // Mount proc and run application
+
     chroot(image_dir);
     chdir("/");
 
