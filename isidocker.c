@@ -24,6 +24,7 @@ isidocker shell <imagem>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <syslog.h>
+#include <fcntl.h>
 
 #define ANSI_COLOR_RED "\x1b[31m"
 #define ANSI_COLOR_GREEN "\x1b[32m"
@@ -257,16 +258,31 @@ int create_container(void)
 
 int run_container(void)
 {
-    // openlog("isidocker", LOG_PID|LOG_CONS, LOG_USER);
-    // syslog(LOG_INFO, "IsiDocker - Starting Container");
-    char *cmd[] = {"/jdk-20.0.2/bin/java", "-jar", "hello-0.0.1-SNAPSHOT.jar", NULL};
+    // Initialize logging to file
+    char log_file_dir[255];
+    strcpy(log_file_dir, image_dir);
+    strcat(log_file_dir, "/logfile.txt");
+    printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Creating log file at %s\n", log_file_dir);
+
+    int logFile = open(log_file_dir, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (logFile == -1) {
+        perror("Error opening log file");
+        return 1;
+    }
+    if (dup2(logFile, STDOUT_FILENO) == -1 || dup2(logFile, STDERR_FILENO) == -1) {
+        perror("Error redirecting output");
+        return 1;
+    }
+    close(logFile);
+
+    // Mount proc and run application
     chroot(image_dir);
-    printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Changing root directory to %s\n", image_dir);
     chdir("/");
+
+    char *cmd[] = {"/jdk-20.0.2/bin/java", "-jar", "hello-0.0.1-SNAPSHOT.jar", NULL};
     mount("proc", "proc", "proc", 0, "");
     printf(">> IsiDOCKER - Proc filesystem mounted\n" ANSI_COLOR_RESET);
     execv("/jdk-20.0.2/bin/java", cmd);
-    // closelog();
     perror("exec");
     exit(EXIT_FAILURE);
 }
