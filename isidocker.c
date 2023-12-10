@@ -33,8 +33,9 @@ isidocker shell <imagem>
 #define ANSI_COLOR_MAGENTA "\x1b[35m"
 #define ANSI_COLOR_CYAN "\x1b[36m"
 #define ANSI_COLOR_RESET "\x1b[0m"
-
+#define SEPARATE_LOGS_SEQUENCE "----------------------------------------\n"
 #define STACK_SIZE 4096
+#define MAX_LINE_LENGTH 1024
 
 #define MODE_COMMAND 0
 #define MODE_SHELL 1
@@ -50,6 +51,8 @@ int childProcess(void *args);
 int create_container(void);
 int run_container(void);
 int run_shell(void);
+int isFileEmpty(const char *filename);
+int fileLineCount(const char *filename);
 
 int main(int argc, char *argv[])
 {
@@ -69,8 +72,6 @@ int main(int argc, char *argv[])
     /* check if .isidocker_images folder exists. If doesn't, create it */
     strcpy(image_dir, user_home);
     strcat(image_dir, "/.isidocker_images/");
-    strcpy(log_file_dir, image_dir);
-    strcat(log_file_dir, "/logfile");
     struct stat s = {0};
     if (!stat(image_dir, &s))
     {
@@ -92,10 +93,12 @@ int main(int argc, char *argv[])
         printf("Available Commands:\n");
 
         printf(" - pull <image_name>    : download and uncompress Image from Isidocker Repo\n");
-        printf(" - extract <image_name> : uncompress Image from tar.gz file deleting existing one\n");
-        printf(" - daemon <image_name>  : creates a daemon for the 'run' command\n");
         printf(" - run <image_name>     : starts a container\n");
         printf(" - shell <image_name>   : access the container and runs a shell\n");
+        printf(" - extract <image_name> : uncompress Image from tar.gz file deleting existing one\n");
+        printf(" - daemon <image_name>  : creates a daemon for the 'run' command\n");
+        printf(" - log <image_name>     : show logs of the last run of a container\n");
+        printf(" - log-all <image_name> : show logs of the last run of a container\n");
         printf(ANSI_COLOR_RESET);
         return 0;
     }
@@ -204,6 +207,7 @@ int main(int argc, char *argv[])
         if (file == NULL)
         {
             printf("ERROR - Could not create file %s\n", service_file_path);
+            return -1;
         }
 
         fprintf(file, "[Unit]\n");
@@ -233,6 +237,69 @@ int main(int argc, char *argv[])
 
         printf(">> IsiDOCKER - Daemon enabled and started!\n");
     }
+    else if (!strcmp(_command, "log"))
+    {
+        strcat(image_dir, _image);
+        strcpy(log_file_dir, image_dir);
+        strcat(log_file_dir, "/logfile");
+        system("clear");
+        printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Reading logs from %s\n", log_file_dir);
+
+        FILE *file = fopen(log_file_dir, "r");
+        if (file == NULL)
+        {
+            perror("Error opening file");
+            return 1;
+        }
+        fseek(file, 0, SEEK_END);
+
+        char currentLine[MAX_LINE_LENGTH];
+        long currentPosition = ftell(file);
+        int lineNumber = 0;
+
+        while (currentPosition > 0)
+        {
+            fseek(file, --currentPosition, SEEK_SET);
+            char currentChar = fgetc(file);
+            if (currentChar == '\n')
+            {
+                if (fgets(currentLine, MAX_LINE_LENGTH, file) != NULL)
+                {
+                    lineNumber++;
+                    if (strcmp(currentLine, SEPARATE_LOGS_SEQUENCE) == 0)
+                        break;
+                }
+            }
+        }
+
+        char firstLogLine[255];
+        lineNumber = fileLineCount(log_file_dir) - lineNumber - 1;
+
+        // if not empty, add 5 to the line number to skip the separator
+        if (lineNumber)
+            lineNumber += 5;
+
+        sprintf(firstLogLine, "%d", lineNumber);
+        char tail_command[255] = "tail -f -n +";
+        strcat(tail_command, firstLogLine);
+        strcat(tail_command, " ");
+        strcat(tail_command, log_file_dir);
+        system(tail_command);
+
+        fclose(file);
+    }
+    else if (!strcmp(_command, "log-all"))
+    {
+        strcat(image_dir, _image);
+        strcpy(log_file_dir, image_dir);
+        strcat(log_file_dir, "/logfile");
+        system("clear");
+        printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Reading all logs from %s\n", log_file_dir);
+
+        char tail_command[255] = "tail -f -n +0 ";
+        strcat(tail_command, log_file_dir);
+        system(tail_command);
+    }
     else
     {
         printf("ERROR - Command: %s is not supported\n", _command);
@@ -259,6 +326,30 @@ int create_container(void)
     }
 }
 
+int fileLineCount(const char *filename)
+{
+    FILE *file = fopen(filename, "r");
+    if (file == NULL)
+    {
+        perror("Error opening file");
+        return -1;
+    }
+
+    int lineCount = 0;
+    int ch;
+
+    while ((ch = fgetc(file)) != EOF)
+    {
+        if (ch == '\n')
+        {
+            lineCount++;
+        }
+    }
+
+    fclose(file);
+    return lineCount;
+}
+
 int isFileEmpty(const char *filename)
 {
     FILE *file = fopen(filename, "rb");
@@ -277,6 +368,8 @@ int isFileEmpty(const char *filename)
 int run_container(void)
 {
     // Initialize logging to file
+    strcpy(log_file_dir, image_dir);
+    strcat(log_file_dir, "/logfile");
     printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Redirecting logs to file at %s\n", log_file_dir);
 
     int logFile = open(log_file_dir, O_WRONLY | O_CREAT | O_APPEND, 0666);
@@ -295,7 +388,7 @@ int run_container(void)
 
     // Check if the log file is empty
     if (!isFileEmpty(log_file_dir))
-        printf("\n\n---------------------------------------------------\n\n\n");
+        printf("\n\n%s\n\n", SEPARATE_LOGS_SEQUENCE);
 
     // Mount proc and run application
 
