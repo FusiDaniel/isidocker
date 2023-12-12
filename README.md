@@ -17,6 +17,11 @@ journalctl _PID=`systemctl show -p MainPID --value isidocker-javacontainer.servi
 log springboot
 journalctl _PID=$(pgrep -P $(systemctl show -p MainPID --value isidocker-javacontainer.service))
 
+bash -c '/jdk-20.0.2/bin/java -jar hello-0.0.1-SNAPSHOT.jar' &
+ps -ef
+mount | grep /proc
+mount -t proc proc /proc
+mount -t proc proc /home/opc/.isidocker_images/javacontainer/proc
 ```
 
 ```
