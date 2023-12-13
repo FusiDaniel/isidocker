@@ -57,8 +57,9 @@ int isFileEmpty(const char *filename);
 int fileLineCount(const char *filename);
 int get_daemon_child_pid(char *daemon_pid_str);
 int run_java(char *daemon_pid_str);
-int killDaemon(char *daemon_pid_str);
-
+int kill_daemon(char *daemon_pid_str);
+int kill_container_processes(void);
+int umount_proc(void);
 int main(int argc, char *argv[])
 {
     printf(ANSI_COLOR_CYAN);
@@ -206,7 +207,7 @@ int main(int argc, char *argv[])
         {
             printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Another Daemon Is Currently Running\n");
             printf(">> IsiDOCKER - Killing Old And Initializing New Daemon \n" ANSI_COLOR_RESET);
-            killDaemon(daemon_pid_str);
+            kill_daemon(daemon_pid_str);
         }
         else
             printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Initializing Daemon\n" ANSI_COLOR_RESET);
@@ -226,8 +227,10 @@ int main(int argc, char *argv[])
         char daemon_pid_str[255];
         if (!get_daemon_child_pid(daemon_pid_str)) // kill daemon if already running
         {
-            printf(">> IsiDOCKER - Stopping Running Daemon \n" ANSI_COLOR_RESET);
-            killDaemon(daemon_pid_str);
+            printf(">> IsiDOCKER - Stopping Running Processes And Daemon \n" ANSI_COLOR_RESET);
+            kill_daemon(daemon_pid_str);
+            kill_container_processes();
+            umount_proc();
         }
         else
         {
@@ -304,15 +307,25 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-int killDaemon(char *daemon_pid_str)
+int kill_container_processes()
+{
+    char kill_command[1024];
+    sprintf(kill_command, "pkill -q -f %s.*%s | grep -v \"^$$\"", "isidocker", _image);
+    system(kill_command);
+}
+
+int umount_proc()
+{
+    char umount_proc_command[512];
+    sprintf(umount_proc_command, "umount %s/proc", image_dir);
+    system(umount_proc_command);
+}
+
+int kill_daemon(char *daemon_pid_str)
 {
     char kill_command[512];
     sprintf(kill_command, "kill -9 %s\n", daemon_pid_str);
     system(kill_command);
-
-    char umount_proc_command[512];
-    sprintf(umount_proc_command, "umount %s/proc", image_dir);
-    system(umount_proc_command);
 }
 
 int get_daemon_child_pid(char *daemon_pid_str)
