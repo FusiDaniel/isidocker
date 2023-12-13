@@ -22,6 +22,19 @@ ps -ef
 mount | grep /proc
 mount -t proc proc /proc
 mount -t proc proc /home/opc/.isidocker_images/javacontainer/proc
+sudo mount -t proc proc /home/opc/.isidocker_images/javacontainer/proc
+sudo umount /home/opc/.isidocker_images/javacontainer/proc
+netstat -tulpn | grep LISTEN
+sudo nsenter --target 3315 --mount --uts --ipc --net --pid -- /bin/bash -c "ps -ef"
+sudo nsenter --target 3315 --mount --uts --ipc --net --pid -- /bin/bash -c "ps -ef"
+sudo unshare --pid --net --fork --uts --ipc chroot /home/opc/.isidocker_images/javacontainer
+sudo unshare --pid --fork chroot /home/opc/.isidocker_images/javacontainer
+pstree -p
+
+sudo unshare --pid --net --fork --uts --ipc --mount-proc=/home/opc/.isidocker_images/javacontainer/proc chroot /home/opc/.isidocker_images/javacontainer
+lsns -l
+lsns -t pid
+sudo unshare -p -f --mount-proc
 ```
 
 ```

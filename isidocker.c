@@ -39,6 +39,8 @@ isidocker shell <imagem>
 
 #define MODE_COMMAND 0
 #define MODE_SHELL 1
+#define MODE_SHELL2 2
+#define MODE_RUN_DAEMON 3
 
 int mode;
 char image_dir[255];
@@ -48,11 +50,14 @@ char user_home[255] = "/home/opc";
 
 // definindo os prototipos de funcoes
 int childProcess(void *args);
-int create_container(void);
-int run_container(void);
-int run_shell(void);
+int manage_container_commands(void);
+int run_daemon(void);
+int run_shell(char *daemon_pid_str);
 int isFileEmpty(const char *filename);
 int fileLineCount(const char *filename);
+int get_daemon_child_pid(char *daemon_pid_str);
+int run_java(char *daemon_pid_str);
+int killDaemon(char *daemon_pid_str);
 
 int main(int argc, char *argv[])
 {
@@ -169,7 +174,7 @@ int main(int argc, char *argv[])
         strcat(image_dir, _image);
         printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Running Image %s \n                 available on FileSystem %s\n" ANSI_COLOR_RESET, _image, image_dir);
         mode = MODE_COMMAND;
-        containerPid = clone(childProcess, malloc(STACK_SIZE) + STACK_SIZE, SIGCHLD | namespaces, NULL);
+        containerPid = clone(childProcess, malloc(STACK_SIZE) + STACK_SIZE, SIGCHLD, NULL);
         if (containerPid == -1)
         {
             perror("clone");
@@ -183,7 +188,7 @@ int main(int argc, char *argv[])
         strcat(image_dir, _image);
         printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Running SHELL %s \n               available on FileSystem %s\n" ANSI_COLOR_RESET, _image, image_dir);
         mode = MODE_SHELL;
-        containerPid = clone(childProcess, malloc(STACK_SIZE) + STACK_SIZE, SIGCHLD | namespaces, NULL);
+        containerPid = clone(childProcess, malloc(STACK_SIZE) + STACK_SIZE, SIGCHLD, NULL);
         if (containerPid == -1)
         {
             perror("clone");
@@ -194,48 +199,40 @@ int main(int argc, char *argv[])
     }
     else if (!strcmp(_command, "daemon"))
     {
-        char service_file_path[255] = "/etc/systemd/system/isidocker-";
-        strcat(service_file_path, _image);
-        strcat(service_file_path, ".service");
+        strcat(image_dir, _image);
 
-        // remove file if exists
-        remove(service_file_path);
-
-        // create service file
-        FILE *file = fopen(service_file_path, "w");
-
-        if (file == NULL)
+        char daemon_pid_str[255];
+        if (!get_daemon_child_pid(daemon_pid_str)) // kill daemon if already running
         {
-            printf("ERROR - Could not create file %s\n", service_file_path);
-            return -1;
+            printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Another Daemon Is Currently Running\n");
+            printf(">> IsiDOCKER - Killing Old And Initializing New Daemon \n" ANSI_COLOR_RESET);
+            killDaemon(daemon_pid_str);
         }
-
-        fprintf(file, "[Unit]\n");
-        fprintf(file, "Description=IsiDocker Daemon\n\n");
-        fprintf(file, "[Service]\n");
-        fprintf(file, "ExecStart=%s/isidocker.e run %s\n\n", user_home, _image);
-        fprintf(file, "[Install]\n");
-        fprintf(file, "WantedBy=multi-user.target\n");
-        fclose(file);
-
-        printf(">> IsiDOCKER - Daemon created at %s\n", service_file_path);
-
-        /*  reloads systemd manager configuration,
-            enables isidocker service (make it start on boot), and
-            starts isidocker service (make it start now)*/
-
-        char enable_command[255] = "systemctl enable isidocker-";
-        strcat(enable_command, _image);
-        strcat(enable_command, ".service");
-        char start_command[255] = "systemctl start isidocker-";
-        strcat(start_command, _image);
-        strcat(start_command, ".service");
-
-        system("systemctl daemon-reload");
-        system(enable_command);
-        system(start_command);
-
-        printf(">> IsiDOCKER - Daemon enabled and started!\n");
+        else
+            printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Initializing Daemon\n" ANSI_COLOR_RESET);
+        mode = MODE_RUN_DAEMON;
+        containerPid = clone(childProcess, malloc(STACK_SIZE) + STACK_SIZE, SIGCHLD | namespaces, NULL);
+        if (containerPid == -1)
+        {
+            perror("clone");
+            exit(1);
+        }
+        get_daemon_child_pid(daemon_pid_str);
+        return 0;
+    }
+    else if (!strcmp(_command, "stop"))
+    {
+        strcat(image_dir, _image);
+        char daemon_pid_str[255];
+        if (!get_daemon_child_pid(daemon_pid_str)) // kill daemon if already running
+        {
+            printf(">> IsiDOCKER - Stopping Running Daemon \n" ANSI_COLOR_RESET);
+            killDaemon(daemon_pid_str);
+        }
+        else
+        {
+            printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - No Running Daemon Found\n" ANSI_COLOR_RESET);
+        }
     }
     else if (!strcmp(_command, "log"))
     {
@@ -307,23 +304,54 @@ int main(int argc, char *argv[])
     return 0;
 }
 
+int killDaemon(char *daemon_pid_str)
+{
+    char kill_command[512];
+    sprintf(kill_command, "kill -9 %s\n", daemon_pid_str);
+    system(kill_command);
+
+    char umount_proc_command[512];
+    sprintf(umount_proc_command, "umount %s/proc", image_dir);
+    system(umount_proc_command);
+}
+
+int get_daemon_child_pid(char *daemon_pid_str)
+{
+    FILE *fp = popen("lsns -t pid | grep \"javacontainer\" | awk '{print $4}'", "r");
+    if (fp == NULL)
+    {
+        perror("Error opening pipe");
+        exit(EXIT_FAILURE);
+    }
+    pid_t daemon_pid = 0;
+    fscanf(fp, "%d", &daemon_pid);
+    sprintf(daemon_pid_str, "%d", daemon_pid);
+    if (daemon_pid == 0) // daemon is not running
+        return 1;
+    return 0;
+}
+
 int childProcess(void *args)
 {
     (void)args;
-    create_container();
+    manage_container_commands();
     return (0);
 }
-
-int create_container(void)
+int manage_container_commands(void)
 {
+    if (mode == MODE_RUN_DAEMON)
+        run_daemon();
+
+    char daemon_pid_str[255];
+    if (get_daemon_child_pid(daemon_pid_str))
+    {
+        printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - No daemon found, initialize daemon first with command: isidocker daemon <imagem>\n");
+        return 1;
+    }
     if (mode == MODE_COMMAND)
-    {
-        run_container();
-    }
+        run_java(daemon_pid_str);
     else
-    {
-        run_shell();
-    }
+        run_shell(daemon_pid_str);
 }
 
 int fileLineCount(const char *filename)
@@ -349,7 +377,6 @@ int fileLineCount(const char *filename)
     fclose(file);
     return lineCount;
 }
-
 int isFileEmpty(const char *filename)
 {
     FILE *file = fopen(filename, "rb");
@@ -365,53 +392,25 @@ int isFileEmpty(const char *filename)
     return (fileSize == 0);
 }
 
-int run_container(void)
+int run_daemon(void)
 {
-    // Initialize logging to file
-    strcpy(log_file_dir, image_dir);
-    strcat(log_file_dir, "/logfile");
-    printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Redirecting logs to file at %s\n", log_file_dir);
-
-    int logFile = open(log_file_dir, O_WRONLY | O_CREAT | O_APPEND, 0666);
-    if (logFile == -1)
-    {
-        perror("Error opening log file");
-        return 1;
-    }
-
-    if (dup2(logFile, STDOUT_FILENO) == -1 || dup2(logFile, STDERR_FILENO) == -1)
-    {
-        perror("Error redirecting output");
-        return 1;
-    }
-    close(logFile);
-
-    // Check if the log file is empty
-    if (!isFileEmpty(log_file_dir))
-        printf("\n\n%s\n\n", SEPARATE_LOGS_SEQUENCE);
-
-    // Mount proc and run application
-
     chroot(image_dir);
     chdir("/");
-
-    char *cmd[] = {"/jdk-20.0.2/bin/java", "-jar", "hello-0.0.1-SNAPSHOT.jar", NULL};
     mount("proc", "proc", "proc", 0, "");
-    printf(">> IsiDOCKER - Proc filesystem mounted\n" ANSI_COLOR_RESET);
-    execv("/jdk-20.0.2/bin/java", cmd);
-    perror("exec");
-    exit(EXIT_FAILURE);
+    while (1)
+        pause();
 }
-int run_shell(void)
+int run_java(char *daemon_pid_str)
 {
-    char *cmd[] = {"/bin/bash", NULL};
-
-    chroot(image_dir);
-    printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Changing root directory to %s\n", image_dir);
-    chdir("/");
-    mount("proc", "proc", "proc", 0, "");
-    printf(">> IsiDOCKER - Proc filesystem mounted\n" ANSI_COLOR_RESET);
-    execv("/bin/bash", cmd);
-    perror("exec");
-    exit(EXIT_FAILURE);
+    char nsenter_command[1024];
+    sprintf(nsenter_command, "nsenter --target %s --mount --uts --ipc --net --pid --root=\"%s\" --wd=\"%s\" bash -c '/jdk-20.0.2/bin/java -jar hello-0.0.1-SNAPSHOT.jar'", daemon_pid_str, image_dir, image_dir);
+    printf("Entering container with PID: %s\n", daemon_pid_str);
+    system(nsenter_command);
+}
+int run_shell(char *daemon_pid_str)
+{
+    char nsenter_command[1024];
+    sprintf(nsenter_command, "nsenter --target %s --mount --uts --ipc --net --pid --root=\"%s\" --wd=\"%s\" bash", daemon_pid_str, image_dir, image_dir);
+    printf("Entering container with PID: %s\n", daemon_pid_str);
+    system(nsenter_command);
 }
