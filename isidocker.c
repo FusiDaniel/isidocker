@@ -60,6 +60,9 @@ int run_java(char *daemon_pid_str);
 int kill_daemon(char *daemon_pid_str);
 int kill_container_processes(void);
 int umount_proc(void);
+int log_init(void);
+int log_display(void);
+int log_all_display(void);
 int main(int argc, char *argv[])
 {
     printf(ANSI_COLOR_CYAN);
@@ -181,7 +184,7 @@ int main(int argc, char *argv[])
             perror("clone");
             exit(1);
         }
-        waitpid(containerPid, NULL, 0);
+        log_all_display();
         return 0;
     }
     else if (!strcmp(_command, "shell"))
@@ -203,11 +206,10 @@ int main(int argc, char *argv[])
         strcat(image_dir, _image);
 
         char daemon_pid_str[255];
-        if (!get_daemon_child_pid(daemon_pid_str)) // kill daemon if already running
+        if (!get_daemon_child_pid(daemon_pid_str))
         {
-            printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Another Daemon Is Currently Running\n");
-            printf(">> IsiDOCKER - Killing Old And Initializing New Daemon \n" ANSI_COLOR_RESET);
-            kill_daemon(daemon_pid_str);
+            printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Another Daemon Is Already Running\n");
+            return 1;
         }
         else
             printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Initializing Daemon\n" ANSI_COLOR_RESET);
@@ -225,12 +227,12 @@ int main(int argc, char *argv[])
     {
         strcat(image_dir, _image);
         char daemon_pid_str[255];
-        if (!get_daemon_child_pid(daemon_pid_str)) // kill daemon if already running
+        if (!get_daemon_child_pid(daemon_pid_str))
         {
             printf(">> IsiDOCKER - Stopping Running Processes And Daemon \n" ANSI_COLOR_RESET);
+            umount_proc();
             kill_daemon(daemon_pid_str);
             kill_container_processes();
-            umount_proc();
         }
         else
         {
@@ -240,65 +242,12 @@ int main(int argc, char *argv[])
     else if (!strcmp(_command, "log"))
     {
         strcat(image_dir, _image);
-        strcpy(log_file_dir, image_dir);
-        strcat(log_file_dir, "/logfile");
-        system("clear");
-        printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Reading logs from %s\n", log_file_dir);
-
-        FILE *file = fopen(log_file_dir, "r");
-        if (file == NULL)
-        {
-            perror("Error opening file");
-            return 1;
-        }
-        fseek(file, 0, SEEK_END);
-
-        char currentLine[MAX_LINE_LENGTH];
-        long currentPosition = ftell(file);
-        int lineNumber = 0;
-
-        while (currentPosition > 0)
-        {
-            fseek(file, --currentPosition, SEEK_SET);
-            char currentChar = fgetc(file);
-            if (currentChar == '\n')
-            {
-                if (fgets(currentLine, MAX_LINE_LENGTH, file) != NULL)
-                {
-                    lineNumber++;
-                    if (strcmp(currentLine, SEPARATE_LOGS_SEQUENCE) == 0)
-                        break;
-                }
-            }
-        }
-
-        char firstLogLine[255];
-        lineNumber = fileLineCount(log_file_dir) - lineNumber - 1;
-
-        // if not empty, add 5 to the line number to skip the separator
-        if (lineNumber)
-            lineNumber += 5;
-
-        sprintf(firstLogLine, "%d", lineNumber);
-        char tail_command[255] = "tail -f -n +";
-        strcat(tail_command, firstLogLine);
-        strcat(tail_command, " ");
-        strcat(tail_command, log_file_dir);
-        system(tail_command);
-
-        fclose(file);
+        log_display();
     }
     else if (!strcmp(_command, "log-all"))
     {
         strcat(image_dir, _image);
-        strcpy(log_file_dir, image_dir);
-        strcat(log_file_dir, "/logfile");
-        system("clear");
-        printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Reading all logs from %s\n", log_file_dir);
-
-        char tail_command[255] = "tail -f -n +0 ";
-        strcat(tail_command, log_file_dir);
-        system(tail_command);
+        log_all_display();
     }
     else
     {
@@ -307,20 +256,18 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-int kill_container_processes()
+int kill_container_processes(void)
 {
     char kill_command[1024];
-    sprintf(kill_command, "pkill -q -f %s.*%s | grep -v \"^$$\"", "isidocker", _image);
+    sprintf(kill_command, "pkill -f %s.*%s | grep -v \"^$$\"", "isidocker", _image);
     system(kill_command);
 }
-
-int umount_proc()
+int umount_proc(void)
 {
     char umount_proc_command[512];
-    sprintf(umount_proc_command, "umount %s/proc", image_dir);
+    sprintf(umount_proc_command, "umount %s/proc >/dev/null", image_dir);
     system(umount_proc_command);
 }
-
 int kill_daemon(char *daemon_pid_str)
 {
     char kill_command[512];
@@ -343,7 +290,6 @@ int get_daemon_child_pid(char *daemon_pid_str)
         return 1;
     return 0;
 }
-
 int childProcess(void *args)
 {
     (void)args;
@@ -404,7 +350,86 @@ int isFileEmpty(const char *filename)
     fclose(file);
     return (fileSize == 0);
 }
+int log_init(void)
+{
+    strcpy(log_file_dir, image_dir);
+    strcat(log_file_dir, "/logfile");
+    printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Redirecting logs to file at %s\n", log_file_dir);
 
+    int logFile = open(log_file_dir, O_WRONLY | O_CREAT | O_APPEND, 0666);
+    if (logFile == -1)
+    {
+        perror("Error opening log file");
+        return 1;
+    }
+
+    if (dup2(logFile, STDOUT_FILENO) == -1 || dup2(logFile, STDERR_FILENO) == -1)
+    {
+        perror("Error redirecting output");
+        return 1;
+    }
+    close(logFile);
+
+    if (!isFileEmpty(log_file_dir))
+        printf("\n\n%s\n\n", SEPARATE_LOGS_SEQUENCE);
+
+    return 0;
+}
+int log_display(void)
+{
+    strcpy(log_file_dir, image_dir);
+    strcat(log_file_dir, "/logfile");
+    printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Reading logs from %s\n", log_file_dir);
+
+    FILE *file = fopen(log_file_dir, "r");
+    if (file == NULL)
+    {
+        perror("Error opening file");
+        return 1;
+    }
+    fseek(file, 0, SEEK_END);
+
+    char currentLine[MAX_LINE_LENGTH];
+    long currentPosition = ftell(file);
+    int lineNumber = 0;
+
+    while (currentPosition > 0)
+    {
+        fseek(file, --currentPosition, SEEK_SET);
+        char currentChar = fgetc(file);
+        if (currentChar == '\n')
+        {
+            if (fgets(currentLine, MAX_LINE_LENGTH, file) != NULL)
+            {
+                lineNumber++;
+                if (strcmp(currentLine, SEPARATE_LOGS_SEQUENCE) == 0)
+                    break;
+            }
+        }
+    }
+
+    char firstLogLine[255];
+    lineNumber = fileLineCount(log_file_dir) - lineNumber - 1;
+
+    sprintf(firstLogLine, "%d", lineNumber);
+    char tail_command[255] = "tail -f -n +";
+    strcat(tail_command, firstLogLine);
+    strcat(tail_command, " ");
+    strcat(tail_command, log_file_dir);
+    system(tail_command);
+
+    fclose(file);
+}
+int log_all_display(void)
+{
+    strcpy(log_file_dir, image_dir);
+    strcat(log_file_dir, "/logfile");
+    printf(ANSI_COLOR_YELLOW ">> IsiDOCKER - Reading all logs from %s\n", log_file_dir);
+
+    char tail_command[255] = "tail -f -n +0 ";
+    strcat(tail_command, log_file_dir);
+    system(tail_command);
+}
 int run_daemon(void)
 {
     chroot(image_dir);
@@ -415,6 +440,7 @@ int run_daemon(void)
 }
 int run_java(char *daemon_pid_str)
 {
+    log_init();
     char nsenter_command[1024];
     sprintf(nsenter_command, "nsenter --target %s --mount --uts --ipc --net --pid --root=\"%s\" --wd=\"%s\" bash -c '/jdk-20.0.2/bin/java -jar hello-0.0.1-SNAPSHOT.jar'", daemon_pid_str, image_dir, image_dir);
     printf("Entering container with PID: %s\n", daemon_pid_str);
