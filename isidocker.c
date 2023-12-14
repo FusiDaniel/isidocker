@@ -1,16 +1,3 @@
-/*
-Features
-
-isidocker pull <imagem>
-    - faz um WGET da imagem em https://www.professorisidro.com.br/dockerimages/<imagem>.tar
-    - descompacta em /home/user/.isidocker/images
-
-isidocker run <imagem>
-    - executa o comando que está disponível em <imagem>.isicommand
-
-isidocker shell <imagem>
-    - acessa a imagem e executa /bin/bash
-*/
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -106,8 +93,9 @@ int main(int argc, char *argv[])
         printf(" - shell <image_name>   : access the container and runs a shell\n");
         printf(" - extract <image_name> : uncompress Image from tar.gz file deleting existing one\n");
         printf(" - daemon <image_name>  : creates a daemon for the 'run' command\n");
+        printf(" - stop <image_name>    : umount proc, and stops daemon and container related processes\n");
         printf(" - log <image_name>     : show logs of the last run of a container\n");
-        printf(" - log-all <image_name> : show logs of the last run of a container\n");
+        printf(" - log-all <image_name> : show logs of all runs of a container\n");
         printf(ANSI_COLOR_RESET);
         return 0;
     }
